@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name            Scrolller.com Autoplay Feed
 // @name:de         Scrolller.com Automatische Wiedergabe im Feed
-// @version         1.0.0
+// @version         1.0.1
 // @description     Autoplay Videos in Feed on Scrolller.com
 // @description:de  Spiele Videos im Feed automatisch ab auf Scrolller.com
 // @icon            https://scrolller.com/assets/favicon-16x16.png
@@ -144,10 +144,10 @@
     }
 
     function loadVideos() {
-        const items = document.querySelectorAll("#fullscreen-link .media-icon");
+        const items = document.querySelectorAll(".vertical-view__item-container .media-icon");
 
         for (const item of items) {
-            const parent = item.closest("#fullscreen-link");
+            const parent = item.closest(".vertical-view__item-container a");
 
             loadVideo(parent);
         }
