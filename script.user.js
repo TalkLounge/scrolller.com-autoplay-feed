@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name            Scrolller.com Autoplay Feed
 // @name:de         Scrolller.com Automatische Wiedergabe im Feed
-// @version         1.0.2
+// @version         1.0.3
 // @description     Autoplay Videos in Feed on Scrolller.com
 // @description:de  Spiele Videos im Feed automatisch ab auf Scrolller.com
 // @icon            https://scrolller.com/assets/favicon-16x16.png
@@ -96,15 +96,40 @@
         let data = await fetch(parent.querySelector("a").href);
         data = await data.text();
         data = new DOMParser().parseFromString(data, "text/html");
-        data = [...data.querySelectorAll("head script")];
-        data = data.find(item => item.innerText.includes("window.scrolllerConfig"));
-        data = data.textContent;
-        data = data.replace("window.scrolllerConfig=", "");
-        data = data.replace(/\\'/g, "'");
-        data = JSON.parse(JSON.parse(data));
-        data = data.item.mediaSources;
-        data = data.filter(item => item.url.endsWith(".mp4"));
-        data = data.reverse();
+
+        try { // Try old first
+            data = [...data.querySelectorAll("head script")];
+            data = data.find(item => item.innerText.includes("window.scrolllerConfig"));
+            data = data.textContent;
+            data = data.replace("window.scrolllerConfig=", "");
+            data = data.replace(/\\'/g, "'");
+            data = JSON.parse(JSON.parse(data));
+            data = data.item.mediaSources;
+        } catch (e) { // Then try new
+            data = [...data.querySelectorAll("script")];
+            data = data.find(item => item.innerText.includes("mediaSources"));
+            data = data.innerText;
+
+            data = data.replace("self.__next_f.push([1,\"7:", "");
+            data = data.replace("\\n\"])", "");
+
+            data = data.replace("self.__next_f.push([1,\"itPost\",", "[[],[{},{},{},{\"post\":{");
+            data = data.replace("self.__next_f.push([1,\"itPost\\\",", "[[],[{},{},{},{\"post\":{");
+            data = data.replace("self.__next_f.push([1,\"38,", "[[],[{},{},{},{\"post\":{");
+            data = data.replace("\n\"])", "");
+
+            data = data.replace(/\\"/g, '"');
+            data = data.replace(/\\"/g, '"');
+            data = data.replace(/\\"/g, '"');
+
+            data = data.replace(/:"{/g, ":{");
+            data = data.replace(/}"}/g, "}}");
+
+            data = JSON.parse(data);
+            data = data[1][3].post.mediaSources;
+        }
+
+        data = data.filter(item => (item.url.endsWith(".webm") || item.url.endsWith(".mp4")) && !item.url.endsWith("_thumb."));
         data = data.map(item => item.url);
 
         const video = document.createElement("video");
@@ -135,7 +160,7 @@
     }
 
     function loadVideos() {
-        const items = document.querySelectorAll("main>div>div>div a:has(div>svg)");
+        const items = document.querySelectorAll("main>div>div>div a:has(div>svg), [class^=verticalView_container]>div>div a:has(div>svg)");
 
         for (const item of items) {
             loadVideo(item.parentNode);
@@ -143,7 +168,7 @@
     }
 
     async function init() {
-        if (!document.querySelector("main>div>div>div picture")) {
+        if (!document.querySelector("main>div>div>div picture, [class^=verticalView_container]>div>div picture")) {
             return;
         }
 
