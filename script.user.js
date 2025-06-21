@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name            Scrolller.com Autoplay Feed
 // @name:de         Scrolller.com Automatische Wiedergabe im Feed
-// @version         1.0.3
+// @version         1.0.4
 // @description     Autoplay Videos in Feed on Scrolller.com
 // @description:de  Spiele Videos im Feed automatisch ab auf Scrolller.com
 // @icon            https://scrolller.com/assets/favicon-16x16.png
@@ -84,6 +84,21 @@
         parent.insertBefore(child.body.firstChild, parent.firstChild);
     }
 
+    function parseJSON(data) {
+        try {
+            return JSON.parse(data);
+        } catch (e) {
+            const possibleEnds = [...data.matchAll(/\]\]/g)].map(match => match.index);
+            for (let i = 0; i < possibleEnds.length; i++) { // Try possible ends of the Array
+                try {
+                    return JSON.parse(data.slice(0, possibleEnds[i] + 2));
+                } catch (e) { }
+            }
+
+            throw e;
+        }
+    }
+
     async function loadVideo(parent) {
         if ([...parent.classList].includes("loaded")) {
             return;
@@ -93,12 +108,13 @@
         parent.classList.add("loaded");
         parent.querySelector("div>svg").parentNode.remove();
 
-        let data = await fetch(parent.querySelector("a").href);
-        data = await data.text();
-        data = new DOMParser().parseFromString(data, "text/html");
+        let response = await fetch(parent.querySelector("a").href);
+        response = await response.text();
+        response = new DOMParser().parseFromString(response, "text/html");
 
+        let data;
         try { // Try old first
-            data = [...data.querySelectorAll("head script")];
+            data = [...response.querySelectorAll("head script")];
             data = data.find(item => item.innerText.includes("window.scrolllerConfig"));
             data = data.textContent;
             data = data.replace("window.scrolllerConfig=", "");
@@ -106,26 +122,124 @@
             data = JSON.parse(JSON.parse(data));
             data = data.item.mediaSources;
         } catch (e) { // Then try new
-            data = [...data.querySelectorAll("script")];
-            data = data.find(item => item.innerText.includes("mediaSources"));
+            data = [...response.querySelectorAll("script")];
+            data = data.find(item => item.innerText.includes("mediaSources") && item.innerText.includes("blurredMediaSources"));
+
+            if (!data) {
+                console.log("----------");
+                console.error("Could not load url scripts");
+                console.log(parent.querySelector("a").href);
+                return;
+            }
+
             data = data.innerText;
+            const dataIntial = data;
 
-            data = data.replace("self.__next_f.push([1,\"7:", "");
-            data = data.replace("\\n\"])", "");
 
-            data = data.replace("self.__next_f.push([1,\"itPost\",", "[[],[{},{},{},{\"post\":{");
-            data = data.replace("self.__next_f.push([1,\"itPost\\\",", "[[],[{},{},{},{\"post\":{");
-            data = data.replace("self.__next_f.push([1,\"38,", "[[],[{},{},{},{\"post\":{");
-            data = data.replace("\n\"])", "");
+            // Base
+            data = data.replace('self.__next_f.push([1,"', "");
+
+
+            if (data.indexOf('],\"default\"]') != -1) { // Delete static/chunks Array
+                data = data.slice(data.indexOf('],\"default\"]'));
+
+                console.log(data.indexOf(':[\"$undefined\"'));
+                if (data.indexOf(':[\"$undefined\"') != -1) {
+                    data = data.slice(data.indexOf(':[\"$undefined\"') + 15);
+                    console.log(data);
+                }
+            }
+
+            if (data.indexOf('dangerouslySetInnerHTML\":{\"__html\":\"$') != -1) { // Delete empty dangerouslySetInnerHTML
+                data = data.slice(data.indexOf('dangerouslySetInnerHTML\":{\"__html\":\"$') + 36);
+            }
+
+            // Delete parts of another JSON / Array
+            while (data.indexOf("}") < data.indexOf("{")) {
+                data = data.slice(data.indexOf("}") + 1);
+            }
+
+            while (data.indexOf("]") < data.indexOf("[")) {
+                data = data.slice(data.indexOf("]") + 1);
+            }
+
+            data = data.replace(/^,/, "");
+            data = data.trim();
+
+
+            // Detect Type
+            let type;
+            if (/^\d+:\[\[/.test(data)) { // 8:[[
+                console.log('Test Case is 8:[[');
+                type = 0;
+            } else if (/^\[\"\$\",/.test(data)) { // ["$",
+                console.log('Test Case is ["$",');
+                type = 1;
+            } else if (/^\[\\"\$\\",/.test(data)) { // ["$",
+                console.log('Test Case is ["$",');
+                type = 2;
+            } else if (/^[A-Za-z]+,/.test(data)) { // ,null
+                console.log('Test Case is ,null');
+                type = 3;
+            }
+
+
+            // Start
+            if (type == 0) {
+                data = data.replace(/^\d+:\[\[/, "[[");
+            } else if (type == 1 || type == 2) {
+                data = data.replace(/^\[/, "[[], [");
+            } else if (type == 3) {
+                data = data.replace(/^[A-Za-z]+,/, '[[], ["", "", null,');
+            }
+
+
+            // De-Escape
+            if (type == 0) {
+                data = data.replace(/:"{/g, ":{");
+                data = data.replace(/}"}/g, "}}");
+
+                data = data.replace(/:\\"\{/g, ":{");
+                data = data.replace(/}\\"\}/g, "}}");
+            }
 
             data = data.replace(/\\"/g, '"');
             data = data.replace(/\\"/g, '"');
             data = data.replace(/\\"/g, '"');
 
-            data = data.replace(/:"{/g, ":{");
-            data = data.replace(/}"}/g, "}}");
+            if (type == 0) {
+                data = data.replace(/\"\"/g, '"');
+                data = data.replaceAll('":",', '":"",');
+            }
 
-            data = JSON.parse(data);
+
+            // End
+            data = data.replace(/\"\]\)$/, "");
+            data = data.replace(/\n/g, "");
+
+
+            // Parse JSON
+            try {
+                const dataBefore = data;
+                data = parseJSON(data);
+
+                if (typeof (data) != "object") {
+                    console.log("----------");
+                    console.error("JSON is not a JSON");
+                    console.log("Data Initial\n", dataIntial);
+                    console.log("Data Before\n", dataBefore);
+                    console.log("Data After\n", data);
+                    return;
+                }
+            } catch (e) {
+                console.log("----------");
+                console.error("Unable to parse JSON");
+                console.error(e);
+                console.log("Data Initial\n", dataIntial);
+                console.log("Data Before\n", data);
+                return;
+            }
+
             data = data[1][3].post.mediaSources;
         }
 
