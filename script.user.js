@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name            Scrolller.com Autoplay Feed
 // @name:de         Scrolller.com Automatische Wiedergabe im Feed
-// @version         1.0.4
+// @version         1.0.5
 // @description     Autoplay Videos in Feed on Scrolller.com
 // @description:de  Spiele Videos im Feed automatisch ab auf Scrolller.com
 // @icon            https://scrolller.com/assets/favicon-16x16.png
@@ -84,18 +84,53 @@
         parent.insertBefore(child.body.firstChild, parent.firstChild);
     }
 
-    function parseJSON(data) {
-        try {
-            return JSON.parse(data);
-        } catch (e) {
-            const possibleEnds = [...data.matchAll(/\]\]/g)].map(match => match.index);
-            for (let i = 0; i < possibleEnds.length; i++) { // Try possible ends of the Array
-                try {
-                    return JSON.parse(data.slice(0, possibleEnds[i] + 2));
-                } catch (e) { }
-            }
+    function extractMediaSourceFromVideoTag(data) {
+        return [...data.querySelectorAll("video source")].map(item => { return { url: item.src } });
+    }
 
-            throw e;
+    function extractMediaSourceFromScrollerConfig(data) {
+        data = [...data.querySelectorAll("head script")];
+        data = data.find(item => item.innerText.includes("window.scrolllerConfig"));
+        data = data.textContent;
+        data = data.replace("window.scrolllerConfig=", "");
+        data = data.replace(/\\'/g, "'");
+        data = JSON.parse(JSON.parse(data));
+        return data.item.mediaSources;
+    }
+
+    function extractMediaSourceFromScriptTags(data, url) {
+        data = [...data.querySelectorAll("script")];
+        data = data.find(item => item.innerText.includes("mediaSources") && item.innerText.includes("blurredMediaSources"));
+
+        if (!data) {
+            console.log("----------");
+            console.error("Could not load url scripts");
+            console.log(url);
+            return;
+        }
+
+        data = data.innerText;
+        const dataBefore = data;
+
+        const indexStart = data.indexOf(`"mediaSources`);
+        let subString = data.substring(indexStart);
+
+        const indexEnd = subString.indexOf("}]") + 2;
+        subString = subString.substring(0, indexEnd);
+
+        subString = `{${subString}}`;
+        subString = subString.replace(/\\"/g, '"');
+        const dataBefore2 = subString;
+
+        try {
+            return JSON.parse(subString)?.mediaSources;
+        } catch (e) {
+            console.log("----------");
+            console.error("Unable to parse JSON");
+            console.log(url);
+            console.error(e);
+            console.log(dataBefore);
+            console.log(dataBefore2);
         }
     }
 
@@ -107,144 +142,56 @@
 
         parent.classList.add("loaded");
         parent.querySelector("div>svg").parentNode.remove();
-
-        let response = await fetch(parent.querySelector("a").href);
-        response = await response.text();
-        response = new DOMParser().parseFromString(response, "text/html");
+        const url = parent.querySelector("a").href;
 
         let data;
-        try { // Try old first
-            data = [...response.querySelectorAll("head script")];
-            data = data.find(item => item.innerText.includes("window.scrolllerConfig"));
-            data = data.textContent;
-            data = data.replace("window.scrolllerConfig=", "");
-            data = data.replace(/\\'/g, "'");
-            data = JSON.parse(JSON.parse(data));
-            data = data.item.mediaSources;
-        } catch (e) { // Then try new
-            data = [...response.querySelectorAll("script")];
-            data = data.find(item => item.innerText.includes("mediaSources") && item.innerText.includes("blurredMediaSources"));
-
-            if (!data) {
-                console.log("----------");
-                console.error("Could not load url scripts");
-                console.log(parent.querySelector("a").href);
-                return;
-            }
-
-            data = data.innerText;
-            const dataIntial = data;
-
-
-            // Base
-            data = data.replace('self.__next_f.push([1,"', "");
-
-
-            if (data.indexOf('],\"default\"]') != -1) { // Delete static/chunks Array
-                data = data.slice(data.indexOf('],\"default\"]'));
-
-                console.log(data.indexOf(':[\"$undefined\"'));
-                if (data.indexOf(':[\"$undefined\"') != -1) {
-                    data = data.slice(data.indexOf(':[\"$undefined\"') + 15);
-                    console.log(data);
-                }
-            }
-
-            if (data.indexOf('dangerouslySetInnerHTML\":{\"__html\":\"$') != -1) { // Delete empty dangerouslySetInnerHTML
-                data = data.slice(data.indexOf('dangerouslySetInnerHTML\":{\"__html\":\"$') + 36);
-            }
-
-            // Delete parts of another JSON / Array
-            while (data.indexOf("}") < data.indexOf("{")) {
-                data = data.slice(data.indexOf("}") + 1);
-            }
-
-            while (data.indexOf("]") < data.indexOf("[")) {
-                data = data.slice(data.indexOf("]") + 1);
-            }
-
-            data = data.replace(/^,/, "");
-            data = data.trim();
-
-
-            // Detect Type
-            let type;
-            if (/^\d+:\[\[/.test(data)) { // 8:[[
-                console.log('Test Case is 8:[[');
-                type = 0;
-            } else if (/^\[\"\$\",/.test(data)) { // ["$",
-                console.log('Test Case is ["$",');
-                type = 1;
-            } else if (/^\[\\"\$\\",/.test(data)) { // ["$",
-                console.log('Test Case is ["$",');
-                type = 2;
-            } else if (/^[A-Za-z]+,/.test(data)) { // ,null
-                console.log('Test Case is ,null');
-                type = 3;
-            }
-
-
-            // Start
-            if (type == 0) {
-                data = data.replace(/^\d+:\[\[/, "[[");
-            } else if (type == 1 || type == 2) {
-                data = data.replace(/^\[/, "[[], [");
-            } else if (type == 3) {
-                data = data.replace(/^[A-Za-z]+,/, '[[], ["", "", null,');
-            }
-
-
-            // De-Escape
-            if (type == 0) {
-                data = data.replace(/:"{/g, ":{");
-                data = data.replace(/}"}/g, "}}");
-
-                data = data.replace(/:\\"\{/g, ":{");
-                data = data.replace(/}\\"\}/g, "}}");
-            }
-
-            data = data.replace(/\\"/g, '"');
-            data = data.replace(/\\"/g, '"');
-            data = data.replace(/\\"/g, '"');
-
-            if (type == 0) {
-                data = data.replace(/\"\"/g, '"');
-                data = data.replaceAll('":",', '":"",');
-            }
-
-
-            // End
-            data = data.replace(/\"\]\)$/, "");
-            data = data.replace(/\n/g, "");
-
-
-            // Parse JSON
+        for (let i = 0; i < 5; i++) { // Try 4 times in case of HTTP Code 500
             try {
-                const dataBefore = data;
-                data = parseJSON(data);
+                data = await fetch(url);
 
-                if (typeof (data) != "object") {
-                    console.log("----------");
-                    console.error("JSON is not a JSON");
-                    console.log("Data Initial\n", dataIntial);
-                    console.log("Data Before\n", dataBefore);
-                    console.log("Data After\n", data);
-                    return;
+                if (data.ok) {
+                    break;
                 }
-            } catch (e) {
-                console.log("----------");
-                console.error("Unable to parse JSON");
-                console.error(e);
-                console.log("Data Initial\n", dataIntial);
-                console.log("Data Before\n", data);
-                return;
-            }
+            } catch (e) { }
 
-            data = data[1][3].post.mediaSources;
+            if (i == 4) {
+                console.error("Got 4 HTTP Code 500. Exiting", url);
+                return;
+            } else {
+                console.log("Got HTTP Code 500. Try again", i, url);
+                await new Promise(r => setTimeout(r, 1000));
+            }
         }
 
-        data = data.filter(item => (item.url.endsWith(".webm") || item.url.endsWith(".mp4")) && !item.url.endsWith("_thumb."));
-        data = data.map(item => item.url);
+        data = await data.text();
+        data = new DOMParser().parseFromString(data, "text/html");
+
+        let mediaSources;
+        try {
+            mediaSources = extractMediaSourceFromVideoTag(data);
+        } catch (e) { }
+
+        if (!mediaSources || !mediaSources.length) {
+            try {
+                mediaSources = extractMediaSourceFromScrollerConfig(data);
+            } catch (e) { }
+        }
+
+        if (!mediaSources || !mediaSources.length) {
+            try {
+                mediaSources = extractMediaSourceFromScriptTags(data, url);
+            } catch (e) { }
+        }
+
+        if (!mediaSources || !mediaSources.length) {
+            console.log("----------");
+            console.error("Could not load mediaSources");
+            console.log(url);
+            return;
+        }
+
+        mediaSources = mediaSources.filter(item => (item.url.endsWith(".webm") || item.url.endsWith(".mp4")) && !item.url.endsWith("_thumb."));
+        mediaSources = mediaSources.map(item => item.url);
 
         const video = document.createElement("video");
         video.autoplay = true;
@@ -264,7 +211,7 @@
             insertSound(parent, true);
         });
 
-        for (const src of data) {
+        for (const src of mediaSources) {
             const source = document.createElement("source");
             source.src = src;
             video.append(source);
