@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name            Scrolller.com Autoplay Feed
 // @name:de         Scrolller.com Automatische Wiedergabe im Feed
-// @version         1.0.6
+// @version         1.0.7
 // @description     Autoplay Videos in Feed on Scrolller.com
 // @description:de  Spiele Videos im Feed automatisch ab auf Scrolller.com
 // @icon            https://scrolller.com/assets/favicon-16x16.png
@@ -20,6 +20,12 @@
     let muted = true;
     let cooldown = Date.now();
     let MEDIASOURCES = {};
+
+    const SELECTOR_FEED_HAS_IMG = "[class*=columnsContainer] [class*=galleryColumn] [class*=galleryItemHandler] img";
+    const SELECTOR_FEED_ALL_PARENT_PLAY = "[class*=columnsContainer] [class*=galleryColumn] [class*=galleryItemHandler]:has([class*=postCard] [class*=videoHandler])";
+    const SELECTOR_FEED_ALL_VIDEOS = "[class*=columnsContainer] [class*=galleryColumn] [class*=galleryItemHandler]:has([class*=postCard]) video";
+    const SELECTOR_PARENT_PLAY = "[class*=videoHandler]";
+    const SELECTOR_PLAY = "[class*=videoHandler]>svg";
 
     function video2SVGParent(video) {
         const parent = video.parentNode.parentNode.parentNode;
@@ -60,7 +66,7 @@
             const svg = e.target.closest(".sound");
             //console.log("Clicked Sound Button", svg);
 
-            document.querySelectorAll("[class^=column_galleryColumn] [class^=handler_galleryItemHandler]:has([class^=card_postCard]) video").forEach(video => {
+            document.querySelectorAll(SELECTOR_FEED_ALL_VIDEOS).forEach(video => {
                 if (!video.muted) {
                     insertSound(video2SVGParent(video), true);
                 }
@@ -112,8 +118,10 @@
             return MEDIASOURCES[url];
         }
 
+        //console.log("loadMediaSources()", url);
+
         let data;
-        for (let i = 1; i <= 4; i++) { // Try 4 times in case of HTTP Code 500
+        for (let i = 1; i <= 8; i++) { // Try 8 times in case of HTTP Code 500
             try {
                 data = await fetch(url);
 
@@ -122,8 +130,8 @@
                 }
             } catch (e) { }
 
-            if (i == 4) {
-                console.error(`[ERROR]: loadMediaSources(): GET failed 4 times for ${url}`);
+            if (i == 8) {
+                console.error(`[ERROR]: loadMediaSources(): GET failed 8 times for ${url}`);
                 return;
             } else {
                 await new Promise(r => setTimeout(r, Math.floor(Math.random() * 501) + 500)); // Cooldown between 500 - 1000 ms
@@ -161,12 +169,12 @@
         //console.log(`loadVideo():`, parent);
 
         parent.querySelector("div").classList.add("loaded");
-        parent.querySelector("[class^=handler_videoHandler]>svg").remove();
+        parent.querySelector(SELECTOR_PLAY).remove();
 
         const url = parent.querySelector("a").href;
         const mediaSources = await loadMediaSources(url);
 
-        if (!mediaSources || !mediaSources.length || !parent.querySelector("[class^=handler_videoHandler]")) {
+        if (!mediaSources || !mediaSources.length || !parent.querySelector(SELECTOR_PARENT_PLAY)) {
             return;
         }
 
@@ -177,11 +185,11 @@
         video.style.height = "100%";
         video.style.position = "absolute";
         video.addEventListener("loadeddata", () => {
-            if (!parent.querySelector("[class^=handler_videoHandler]")) {
+            if (!parent.querySelector(SELECTOR_PARENT_PLAY)) {
                 return; // Already unloaded
             }
 
-            parent.querySelector("[class^=handler_videoHandler]").remove();
+            parent.querySelector(SELECTOR_PARENT_PLAY).remove();
 
             const hasAudio = video.mozHasAudio || Boolean(video.webkitAudioDecodedByteCount) || Boolean(video.audioTracks && video.audioTracks.length);
 
@@ -202,7 +210,7 @@
     }
 
     function loadVideos() {
-        const items = document.querySelectorAll("[class^=column_galleryColumn] [class^=handler_galleryItemHandler]:has([class^=card_postCard] [class^=handler_videoHandler])");
+        const items = document.querySelectorAll(SELECTOR_FEED_ALL_PARENT_PLAY);
 
         for (const item of items) {
             loadVideo(item);
@@ -210,7 +218,7 @@
     }
 
     async function init() {
-        if (!document.querySelector("[class^=column_galleryColumn] [class^=handler_galleryItemHandler] img")) {
+        if (!document.querySelector(SELECTOR_FEED_HAS_IMG)) {
             return;
         }
 
@@ -233,7 +241,7 @@
             let nearest;
             let middle = window.innerHeight / 2;
 
-            document.querySelectorAll("[class^=column_galleryColumn] [class^=handler_galleryItemHandler]:has([class^=card_postCard]) video").forEach(video => {
+            document.querySelectorAll(SELECTOR_FEED_ALL_VIDEOS).forEach(video => {
                 const loud = video2SVGParent(video).querySelector(".sound:not(.muted)");
                 if (loud) {
                     insertSound(video2SVGParent(video), true);
